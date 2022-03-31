@@ -1,0 +1,8 @@
+module github.com/MindHunter86/GitlabRepoCloner
+
+go 1.17
+
+require (
+	github.com/rs/zerolog v1.26.1
+	gopkg.in/urfave/cli.v1 v1.20.0
+)
