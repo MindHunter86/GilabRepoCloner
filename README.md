@@ -1,2 +1,2 @@
 # GilabRepoCloner
-Gilab clone tool for u're migrations
+Gitlab clone tool for u're migrations
