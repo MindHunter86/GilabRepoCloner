@@ -41,7 +41,7 @@ func main() {
 		&cli.IntFlag{
 			Name:    "verbose",
 			Aliases: []string{"v"},
-			Value:   4,
+			Value:   5,
 			Usage:   "Verbose `LEVEL` (value from 5(debug) to 0(panic) and -1 for log disabling(quite mode))",
 		},
 		&cli.BoolFlag{

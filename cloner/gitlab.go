@@ -62,7 +62,7 @@ func (m *glClient) setGitlabConnection() (*gitlab.Client, error) {
 
 func (m *glClient) printGroupsAction() (e error) {
 	var groups []*gitlab.Group
-	if groups, e = m.getInstanceGroups(0); e != nil {
+	if groups, e = m.getInstanceGroups(); e != nil {
 		return
 	}
 
@@ -70,15 +70,108 @@ func (m *glClient) printGroupsAction() (e error) {
 	return
 }
 
-func (m *glClient) getInstanceGroups(page int) (groups []*gitlab.Group, err error) {
+func (m *glClient) getInstanceGroups() (groups []*gitlab.Group, e error) {
+	grp, rsp := []*gitlab.Group{}, &gitlab.Response{}
+
+	for {
+		if grp, rsp, e = m.getGroupsFromPage(rsp.NextPage); e == nil {
+			groups = append(groups, grp...)
+
+			if rsp.NextPage == 0 {
+				break
+			}
+		} else {
+			return
+		}
+	}
+
+	if len(m.groupPrefix) != 0 {
+		groups = m.getMatchedGroups(groups)
+	}
+
+	gLog.Debug().Msgf("There are %d top groups found with given search criteria", len(groups))
+
+	for i := 0; i < len(groups); i++ {
+		group := groups[i]
+
+		for {
+			if grp, rsp, e = m.getSubgroupsFromPage(group.ID, rsp.NextPage); e == nil {
+				groups = append(groups, grp...)
+
+				if rsp.NextPage == 0 {
+					break
+				}
+			} else {
+				return
+			}
+		}
+	}
+
+	return
+}
+
+func (m *glClient) getGroupsFromPage(page int) ([]*gitlab.Group, *gitlab.Response, error) {
+	gLog.Debug().Msgf("Called with page %d ", page)
+
+	listOptions := gitlab.ListOptions{}
+	if page != 0 {
+		listOptions.Page = page
+	}
+
+	groups, rsp, e := m.instance.Groups.ListGroups(&gitlab.ListGroupsOptions{
+		ListOptions:  listOptions,
+		AllAvailable: gitlab.Bool(true),
+		TopLevelOnly: gitlab.Bool(true),
+	})
+	if e != nil {
+		gLog.Error().
+			Msgf("There is some errors while instance groups collecting! Instance: %s, Page: %d", m.endpoint.String(), page)
+		return nil, nil, e
+	}
+
+	return groups, rsp, e
+}
+
+func (m *glClient) getSubgroupsFromPage(gid, page int) ([]*gitlab.Group, *gitlab.Response, error) {
+	gLog.Debug().Msgf("Called with gid %d, page %d", gid, page)
+
+	listOptions := gitlab.ListOptions{}
+	if page != 0 {
+		listOptions.Page = page
+	}
+
+	return m.instance.Groups.ListSubgroups(gid, &gitlab.ListSubgroupsOptions{
+		ListOptions: listOptions,
+	})
+}
+
+func (m *glClient) getInstanceSubgroups(groups []*gitlab.Group) (subgroups []*gitlab.Group, e error) {
+	for _, group := range groups {
+		if group == nil {
+			continue
+		}
+
+		var subgroup []*gitlab.Group
+		if subgroup, e = m.getGroupSubgroups(group, 1); e != nil {
+			return
+		}
+
+		subgroups = append(subgroups, subgroup...)
+	}
+
+	subgroups = append(groups, subgroups...)
+	return
+}
+
+func (m *glClient) getGroupSubgroups(group *gitlab.Group, page int) (subgroups []*gitlab.Group, e error) {
+	gLog.Debug().Msgf("Called getGroupSubgroups withi %d %d", group.ID, page)
+
 	var rsp *gitlab.Response
-	if groups, rsp, err = m.instance.Groups.ListGroups(&gitlab.ListGroupsOptions{
+	if subgroups, rsp, e = m.instance.Groups.ListSubgroups(group.ID, &gitlab.ListSubgroupsOptions{
 		ListOptions: gitlab.ListOptions{
 			Page: page,
 		},
-		AllAvailable: gitlab.Bool(true),
-		TopLevelOnly: gitlab.Bool(true),
-	}); err != nil {
+	}); e != nil {
 		return
 	}
 
@@ -87,30 +180,34 @@ func (m *glClient) getInstanceGroups(page int) (groups []*gitlab.Group, err erro
 		return
 	}
 
-	if len(m.groupPrefix) != 0 {
-		m.getMatchedGroups(groups)
-	}
-
-	if rsp.CurrentPage != rsp.TotalPages {
-		if groups2, err := m.getInstanceGroups(rsp.NextPage); err == nil {
-			groups = append(groups, groups2...)
-		}
+	if len(subgroups) == 0 {
 		return
 	}
 
-	//
+	if rsp.CurrentPage != rsp.TotalPages {
+		var subgroups2 []*gitlab.Group
+		if subgroups2, e = m.getGroupSubgroups(group, rsp.NextPage); e != nil {
+			return
+		}
+
+		subgroups = append(subgroups, subgroups2...)
+		return
+	}
 
 	return
 }
 
-func (m *glClient) getMatchedGroups(groups []*gitlab.Group) {
+func (m *glClient) getMatchedGroups(groups []*gitlab.Group) (matchedGroups []*gitlab.Group) {
 	for i, group := range groups {
 		if group.FullPath == m.groupPrefix {
+			matchedGroups = append(matchedGroups, group)
 			continue
 		}
 
 		groups[i] = nil
 	}
+
+	return
 }
 
 func (m *glClient) getInstanceGroupTree() {
@@ -131,10 +228,6 @@ func (m *glClient) printGroups(groups []*gitlab.Group) {
 
 		t.AppendRow([]interface{}{group.ID, group.FullPath, group.FullName, group.Visibility, group.ParentID, group.CreatedAt})
 	}
-}
-
-func (m *glClient) getGroupSubgroups() {
-
 }
 
 func (m *glClient) getGroupRepositories() {
