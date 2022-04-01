@@ -105,7 +105,8 @@ func main() {
 					Name:  "repositories",
 					Usage: "list gitlab repositories",
 					Action: func(c *cli.Context) error {
-						return nil
+						zerolog.SetGlobalLevel(zerolog.DebugLevel)
+						return cloner.NewCloner(&log).Bootstrap(c, cloner.PrgmActionPrintRepositories)
 					},
 				},
 			},

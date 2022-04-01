@@ -40,14 +40,21 @@ func (m *Cloner) Bootstrap(ctx *cli.Context, action uint8) (e error) {
 
 	switch action {
 	case PrgmActionPrintGroups:
-		gLog.Debug().Msg("1111")
-		gLog.Debug().Msg(gCli.Args().Get(0))
 		var gl *glClient
 		gl, e = newGlClient().connect(gCli.Args().Get(0))
 		if e != nil {
 			return
 		}
 		if e = gl.printGroupsAction(); e != nil {
+			return
+		}
+	case PrgmActionPrintRepositories:
+		var gl *glClient
+		gl, e = newGlClient().connect(gCli.Args().Get(0))
+		if e != nil {
+			return
+		}
+		if e = gl.printRepositoriesAction(); e != nil {
 			return
 		}
 	default:
