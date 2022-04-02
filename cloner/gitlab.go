@@ -71,7 +71,8 @@ func (m *glClient) printGroupsAction() (e error) {
 }
 
 func (m *glClient) printRepositoriesAction() (e error) {
-	groups, projects := []*gitlab.Group{}, []*gitlab.Project{}
+	var groups []*gitlab.Group
+	var projects []*gitlab.Project
 
 	if groups, e = m.getInstanceGroups(); e != nil {
 		return
@@ -86,7 +87,8 @@ func (m *glClient) printRepositoriesAction() (e error) {
 }
 
 func (m *glClient) getInstanceProjects(groups []*gitlab.Group) (projects []*gitlab.Project, e error) {
-	prjs, rsp := []*gitlab.Project{}, &gitlab.Response{}
+	var prjs []*gitlab.Project
+	var rsp *gitlab.Response
 
 	for _, group := range groups {
 		for {
@@ -121,7 +123,8 @@ func (m *glClient) getProjectsFromPage(gid, page int) ([]*gitlab.Project, *gitla
 }
 
 func (m *glClient) getInstanceGroups() (groups []*gitlab.Group, e error) {
-	grp, rsp := []*gitlab.Group{}, &gitlab.Response{}
+	var grp []*gitlab.Group
+	var rsp *gitlab.Response
 
 	for {
 		if grp, rsp, e = m.getGroupsFromPage(rsp.NextPage); e == nil {

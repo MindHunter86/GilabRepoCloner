@@ -1,6 +1,3 @@
-//go:build !syslog
-// +build !syslog
-
 package main
 
 import (
@@ -16,7 +13,6 @@ import (
 	"github.com/urfave/cli/v2"
 )
 
-var log zerolog.Logger
 var version = "devel" // -ldflags="-X 'main.version=X.X.X'"
 
 func main() {
@@ -76,6 +72,7 @@ func main() {
 		Out: os.Stderr,
 	}).With().Timestamp().Logger().Hook(SeverityHook{})
 	zerolog.TimeFieldFormat = time.RFC3339Nano
+	log.Debug().Msg("starting...")
 
 	app.Commands = []*cli.Command{
 		&cli.Command{
@@ -98,7 +95,7 @@ func main() {
 						// }
 
 						zerolog.SetGlobalLevel(zerolog.DebugLevel)
-						return cloner.NewCloner(&log).Bootstrap(c, cloner.PrgmActionPrintGroups)
+						return cloner.NewCloner(&log, c).PrintGroups()
 					},
 				},
 				&cli.Command{
@@ -106,7 +103,7 @@ func main() {
 					Usage: "list gitlab repositories",
 					Action: func(c *cli.Context) error {
 						zerolog.SetGlobalLevel(zerolog.DebugLevel)
-						return cloner.NewCloner(&log).Bootstrap(c, cloner.PrgmActionPrintRepositories)
+						return cloner.NewCloner(&log, c).PrintRepositories()
 					},
 				},
 			},
