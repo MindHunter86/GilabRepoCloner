@@ -226,7 +226,7 @@ func (m *glClient) printProjects(projects []*gitlab.Project) {
 
 	for _, project := range projects {
 		t.AppendRow([]interface{}{
-			project.ID, project.Path, project.Name, project.Visibility, project.CreatedAt, project.LastActivityAt,
+			project.ID, project.PathWithNamespace, project.Name, project.Visibility, project.CreatedAt, project.LastActivityAt,
 		})
 	}
 }
