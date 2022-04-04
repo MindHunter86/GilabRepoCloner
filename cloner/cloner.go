@@ -15,6 +15,7 @@ var (
 	gLog *zerolog.Logger
 	gCli *cli.Context
 
+	gCtx   context.Context
 	gAbort context.CancelFunc
 )
 
@@ -47,11 +48,11 @@ func (m *Cloner) Bootstrap(action uint8) (e error) {
 	kernSignal := make(chan os.Signal, 1)
 	signal.Notify(kernSignal, syscall.SIGINT, syscall.SIGTERM, syscall.SIGTERM, syscall.SIGQUIT)
 
-	var cancelCtx context.Context
-	cancelCtx, gAbort = context.WithCancel(context.WithValue(context.Background(), contextKeyKernSignal, kernSignal))
+	gCtx, gAbort = context.WithCancel(context.WithValue(context.Background(), contextKeyKernSignal, kernSignal))
 
 	wg, ep := sync.WaitGroup{}, make(chan error, 1)
-	go m.loop(cancelCtx, ep, wg.Done)
+	wg.Add(1)
+	go m.loop(ep, wg.Done)
 
 	switch action {
 	case PrgmActionPrintGroups:
@@ -80,12 +81,13 @@ func (m *Cloner) Bootstrap(action uint8) (e error) {
 		gLog.Warn().Err(err).Msg("Abnormal destruct status!")
 	}
 
+	wg.Wait()
 	return e
 }
 
-func (m *Cloner) loop(ctx context.Context, errors chan error, done func()) {
+func (m *Cloner) loop(errors chan error, done func()) {
 	// var err error
-	kernSignal := ctx.Value("kernSignal").(chan os.Signal)
+	kernSignal := gCtx.Value("kernSignal").(chan os.Signal)
 
 LOOP:
 	for {
@@ -99,7 +101,7 @@ LOOP:
 		// 		gLog.Error().Err(err).Msg("Fatal Runtime Error!!! Abnormal application closing ...")
 		// 		break LOOP
 		// 	}
-		case <-ctx.Done():
+		case <-gCtx.Done():
 			break LOOP
 		}
 	}
