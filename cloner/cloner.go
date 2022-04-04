@@ -17,6 +17,8 @@ var (
 
 	gCtx   context.Context
 	gAbort context.CancelFunc
+
+	gQueue chan *job
 )
 
 const (
@@ -50,9 +52,19 @@ func (m *Cloner) Bootstrap(action uint8) (e error) {
 
 	gCtx, gAbort = context.WithCancel(context.WithValue(context.Background(), contextKeyKernSignal, kernSignal))
 
+	// main event loop init
 	wg, ep := sync.WaitGroup{}, make(chan error, 1)
 	wg.Add(1)
 	go m.loop(ep, wg.Done)
+
+	// queue subsystem init
+	wg.Add(1)
+	pool := newPool()
+	gQueue = pool.getJobQueue()
+	go func(done func()) {
+		pool.dispatch()
+		done()
+	}(wg.Done)
 
 	switch action {
 	case PrgmActionPrintGroups:
@@ -81,6 +93,7 @@ func (m *Cloner) Bootstrap(action uint8) (e error) {
 		gLog.Warn().Err(err).Msg("Abnormal destruct status!")
 	}
 
+	gLog.Debug().Msg("waiting for event loop and queue subsystem")
 	wg.Wait()
 	return e
 }
@@ -88,6 +101,8 @@ func (m *Cloner) Bootstrap(action uint8) (e error) {
 func (m *Cloner) loop(errors chan error, done func()) {
 	// var err error
 	kernSignal := gCtx.Value("kernSignal").(chan os.Signal)
+
+	gLog.Debug().Msg("starting main event loop")
 
 LOOP:
 	for {
@@ -105,6 +120,8 @@ LOOP:
 			break LOOP
 		}
 	}
+
+	gLog.Debug().Msg("main event loop has been stopped")
 }
 
 func (m *Cloner) destruct() error { return nil }

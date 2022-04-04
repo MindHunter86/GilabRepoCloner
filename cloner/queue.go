@@ -39,6 +39,9 @@ func newWorker(ctx context.Context, workerPool chan chan *job) *worker {
 func (m *worker) start() {
 	var j *job
 
+	gLog.Debug().Msg("worker has been started")
+	defer gLog.Debug().Msg("abort func has been called, closing worker")
+
 	for {
 		// register the current worker into the worker queue.
 		m.workerPool <- m.jobChannel
@@ -70,8 +73,11 @@ func (m *pool) getJobQueue() chan *job {
 }
 
 func (m *pool) spawnWorkers() {
+	gLog.Debug().Msg("spawning workers")
+
 	for i := 0; i < gCli.Int("queue-workers"); i++ {
 		wrk := newWorker(m.ctx, m.workerPool)
+		gLog.Debug().Msgf("worker #%d starting", i)
 
 		m.wg.Add(1)
 		go func(wrk *worker, done func()) {
@@ -85,24 +91,30 @@ func (m *pool) dispatch() {
 	var j *job
 	var jChannel chan *job
 
+	gLog.Debug().Msg("starting queue subsystem")
 	m.ctx, m.abort = context.WithCancel(context.Background())
 	m.spawnWorkers()
 
+	gLog.Debug().Msg("starting queue job loop")
+LOOP:
 	for {
 		select {
 		case <-gCtx.Done():
+			gLog.Debug().Msg("main context abort() has been closed, stopping dispatcher")
 			m.abort()
-			return
+			break LOOP
 		case j = <-m.jobQueue:
 			jChannel = <-m.workerPool
 			jChannel <- j
 
 			if gCtx.Err() != nil {
+				gLog.Debug().Msg("main context abort() has been closed, stopping dispatcher (job case)")
 				m.abort()
-				return
+				break LOOP
 			}
 		}
 	}
 
+	gLog.Debug().Msg("waiting for workers death")
 	m.wg.Wait()
 }
