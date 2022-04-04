@@ -63,7 +63,11 @@ func (m *glClient) setGitlabConnection() (*gitlab.Client, error) {
 
 func (m *glClient) printGroupsAction() (e error) {
 	var groups []*gitlab.Group
-	if groups, e = m.getInstanceGroups(); e != nil {
+	// if groups, e = m.getInstanceGroups(); e != nil {
+	// 	return
+	// }
+
+	if groups, e = m.getInstanceGroupsAsync(); e != nil {
 		return
 	}
 
@@ -75,7 +79,11 @@ func (m *glClient) printRepositoriesAction() (e error) {
 	var groups []*gitlab.Group
 	var projects []*gitlab.Project
 
-	if groups, e = m.getInstanceGroups(); e != nil {
+	// if groups, e = m.getInstanceGroups(); e != nil {
+	// 	return
+	// }
+
+	if groups, e = m.getInstanceGroupsAsync(); e != nil {
 		return
 	}
 
@@ -123,18 +131,16 @@ func (m *glClient) getInstanceProjectsAsync(groups []*gitlab.Group) (projects []
 
 	var prjsChannel chan *[]*gitlab.Project
 	var nextPage int
-	var createdJobs int
 	var jobsWait sync.WaitGroup
 
 	prjsChannel = make(chan *[]*gitlab.Project, gCli.Int("queue-workers"))
 
+	// job responses collector:
 	go func() {
-		// collect responses from jobs:
 		gLog.Debug().Msgf("there is %d jobs in queue", len(prjsChannel))
 		defer gLog.Debug().Msg("jobs result collector has been finished")
 
 		var ok bool
-		var handledJobs int
 		var jobProjects *[]*gitlab.Project
 
 		for {
@@ -145,30 +151,27 @@ func (m *glClient) getInstanceProjectsAsync(groups []*gitlab.Group) (projects []
 			}
 
 			projects = append(projects, *jobProjects...)
-			handledJobs++
 		}
 	}()
 
+	// job spawner:
 	for i, group := range groups {
 		gLog.Debug().Msgf("there are %d groups waiting for scaning; scan #%d", len(groups), i)
 		rsp := responsePool.Get().(*gitlab.Response)
 
-		// swpan jobs:
 		for {
 
 			// first call for totalPages variable get
 			if rsp.TotalPages == 0 {
 				if prjs, rsp, e = m.getProjectsFromPage(group.ID, rsp.NextPage); e == nil {
-					// collect first results
 					projects = append(projects, prjs...)
 
-					nextPage = rsp.NextPage
-					gLog.Debug().Msgf("nextpage %d", rsp.NextPage)
-
-					if nextPage == 0 {
+					if rsp.NextPage == 0 {
 						break
 					}
 
+					nextPage = rsp.NextPage
+					gLog.Debug().Msgf("nextpage %d", rsp.NextPage)
 				} else {
 					gLog.Error().Err(e).Msg("There is abnraml result from Gitlab API")
 					return
@@ -214,7 +217,6 @@ func (m *glClient) getInstanceProjectsAsync(groups []*gitlab.Group) (projects []
 				args: args,
 			}
 
-			createdJobs++
 			nextPage++
 		}
 
@@ -249,6 +251,102 @@ func (m *glClient) getProjectsFromPage(gid, page int) ([]*gitlab.Project, *gitla
 	return m.instance.Groups.ListGroupProjects(gid, &gitlab.ListGroupProjectsOptions{
 		ListOptions: listOptions,
 	})
+}
+
+func (m *glClient) getInstanceGroupsAsync() (groups []*gitlab.Group, e error) {
+	var grp []*gitlab.Group
+	var rsp *gitlab.Response = &gitlab.Response{}
+
+	var jobsWait sync.WaitGroup
+	var collectorWait sync.WaitGroup
+	grpsChannel := make(chan *[]*gitlab.Group, gCli.Int("queue-workers"))
+
+	// job responses collector:
+	collectorWait.Add(1)
+	go func(done func()) {
+		defer done()
+
+		gLog.Debug().Msgf("there is %d jobs in queue", len(grpsChannel))
+		defer gLog.Debug().Msg("jobs result collector has been finished")
+
+		var ok bool
+		var jobGroups *[]*gitlab.Group
+
+		for {
+			jobGroups, ok = <-grpsChannel
+			gLog.Debug().Msg("there is new result from job, handling...")
+			if !ok || gCtx.Err() != nil {
+				return
+			}
+
+			groups = append(groups, *jobGroups...)
+		}
+	}(collectorWait.Done)
+
+	// job spawner:
+	for nextPage := 1; nextPage != rsp.TotalPages && gCtx.Err() == nil; nextPage++ {
+		if rsp.TotalPages == 0 {
+			if grp, rsp, e = m.getGroupsFromPage(rsp.NextPage); e == nil {
+				grp = m.getMatchedGroups(grp)
+				grpsChannel <- &grp
+
+				if rsp.NextPage == 0 {
+					break
+				}
+
+				nextPage = rsp.NextPage
+				gLog.Debug().Msgf("nextpage %d", rsp.NextPage)
+			} else {
+				gLog.Error().Err(e).Msg("There is abnraml result from Gitlab API")
+				return
+			}
+		}
+
+		// TODO ERROR HANDLING
+		// async calls (jobs spawn)
+		args := map[string]interface{}{
+			"page":    nextPage,
+			"channel": grpsChannel,
+			"done":    jobsWait.Done,
+		}
+
+		jobsWait.Add(1)
+		gQueue <- &job{
+			fn: func(payload map[string]interface{}) error {
+				defer payload["done"].(func())()
+
+				page := payload["page"].(int)
+				pChannel := payload["channel"].(chan *[]*gitlab.Group)
+
+				gLog.Debug().Msgf("There is new job with page %d", page)
+
+				grps, _, e := m.getGroupsFromPage(page)
+				if e != nil {
+					gLog.Error().Err(e).Msg("There is abnormal result from Gitlab API")
+					// TODO ADD ERROR MESSAGE HANDLING
+					return e
+				}
+
+				grps = m.getMatchedGroups(grps)
+				pChannel <- &grps
+
+				gLog.Debug().Msg("all done, job can be stopped now")
+				return nil
+			},
+			args: args,
+		}
+
+		gLog.Debug().Msg("groups scaning was finished")
+	}
+
+	gLog.Debug().Msg("all jobs were spawned, waiting...")
+	jobsWait.Wait()
+
+	gLog.Debug().Msg("all jobs are executed, close result pipeline")
+	close(grpsChannel)
+
+	collectorWait.Wait()
+	return
 }
 
 func (m *glClient) getInstanceGroups() (groups []*gitlab.Group, e error) {
