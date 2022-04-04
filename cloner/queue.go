@@ -49,13 +49,14 @@ func (m *worker) start() {
 
 		select {
 		case <-m.ctx.Done():
+			close(m.jobChannel)
 			return
-
 		case j = <-m.jobChannel:
 			// payload
 			_ = j.fn(j.args)
 
 			if m.ctx.Err() != nil {
+				close(m.jobChannel)
 				return
 			}
 		}
