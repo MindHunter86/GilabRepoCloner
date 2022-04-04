@@ -93,6 +93,9 @@ func (m *Cloner) Bootstrap(action uint8) (e error) {
 		gLog.Warn().Err(err).Msg("Abnormal destruct status!")
 	}
 
+	gLog.Debug().Msg("trying to stop program execution")
+	gAbort()
+
 	gLog.Debug().Msg("waiting for event loop and queue subsystem")
 	wg.Wait()
 	return e

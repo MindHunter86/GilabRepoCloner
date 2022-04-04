@@ -7,8 +7,8 @@ import (
 
 type (
 	job struct {
-		fn   func(interface{}) error
-		args interface{}
+		fn   func(map[string]interface{}) error
+		args map[string]interface{}
 	}
 	worker struct {
 		ctx context.Context
@@ -45,6 +45,7 @@ func (m *worker) start() {
 	for {
 		// register the current worker into the worker queue.
 		m.workerPool <- m.jobChannel
+		gLog.Debug().Msg("worker has been reregistered")
 
 		select {
 		case <-m.ctx.Done():
@@ -114,6 +115,8 @@ LOOP:
 			}
 		}
 	}
+
+	close(m.workerPool)
 
 	gLog.Debug().Msg("waiting for workers death")
 	m.wg.Wait()

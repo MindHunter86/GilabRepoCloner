@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/xanzy/go-gitlab"
@@ -78,7 +79,11 @@ func (m *glClient) printRepositoriesAction() (e error) {
 		return
 	}
 
-	if projects, e = m.getInstanceProjects(groups); e != nil {
+	// if projects, e = m.getInstanceProjects(groups); e != nil {
+	// 	return
+	// }
+
+	if projects, e = m.getInstanceProjectsAsync(groups); e != nil {
 		return
 	}
 
@@ -103,6 +108,130 @@ func (m *glClient) getInstanceProjects(groups []*gitlab.Group) (projects []*gitl
 			}
 		}
 	}
+
+	return
+}
+
+func (m *glClient) getInstanceProjectsAsync(groups []*gitlab.Group) (projects []*gitlab.Project, e error) {
+	var prjs []*gitlab.Project
+
+	responsePool := sync.Pool{
+		New: func() interface{} {
+			return &gitlab.Response{}
+		},
+	}
+
+	var prjsChannel chan *[]*gitlab.Project
+	var nextPage int
+	var createdJobs int
+	var jobsWait sync.WaitGroup
+
+	prjsChannel = make(chan *[]*gitlab.Project, gCli.Int("queue-workers"))
+
+	go func() {
+		// collect responses from jobs:
+		gLog.Debug().Msgf("there is %d jobs in queue", len(prjsChannel))
+		defer gLog.Debug().Msg("jobs result collector has been finished")
+
+		var ok bool
+		var handledJobs int
+		var jobProjects *[]*gitlab.Project
+
+		for {
+			jobProjects, ok = <-prjsChannel
+			gLog.Debug().Msg("there is new result from job, handling...")
+			if !ok {
+				return
+			}
+
+			projects = append(projects, *jobProjects...)
+			handledJobs++
+		}
+	}()
+
+	for i, group := range groups {
+		gLog.Debug().Msgf("there are %d groups waiting for scaning; scan #%d", len(groups), i)
+		rsp := responsePool.Get().(*gitlab.Response)
+
+		// swpan jobs:
+		for {
+
+			// first call for totalPages variable get
+			if rsp.TotalPages == 0 {
+				if prjs, rsp, e = m.getProjectsFromPage(group.ID, rsp.NextPage); e == nil {
+					// collect first results
+					projects = append(projects, prjs...)
+
+					nextPage = rsp.NextPage
+					gLog.Debug().Msgf("nextpage %d", rsp.NextPage)
+
+					if nextPage == 0 {
+						break
+					}
+
+				} else {
+					gLog.Error().Err(e).Msg("There is abnraml result from Gitlab API")
+					return
+				}
+			}
+
+			if nextPage == rsp.TotalPages {
+				break
+			}
+
+			// TODO ERROR HANDLING
+			// async calls (jobs spawn)
+			args := map[string]interface{}{
+				"page":    nextPage,
+				"group":   group.ID,
+				"channel": prjsChannel,
+				"done":    jobsWait.Done,
+			}
+
+			jobsWait.Add(1)
+			gQueue <- &job{
+				fn: func(payload map[string]interface{}) error {
+					defer payload["done"].(func())()
+
+					page, group := payload["page"].(int), payload["group"].(int)
+					pChannel := payload["channel"].(chan *[]*gitlab.Project)
+
+					gLog.Debug().Msgf("There is new job with page %d and group %d", page, group)
+
+					prjs, _, e := m.getProjectsFromPage(group, page)
+					if e != nil {
+						gLog.Error().Err(e).Msg("There is abnormal result from Gitlab API")
+						// TODO ADD ERROR MESSAGE HANDLING
+						return e
+					}
+
+					gLog.Debug().Msg("trying to push projects in pipe")
+					pChannel <- &prjs
+
+					gLog.Debug().Msg("all done, job can be stopped now")
+					return nil
+				},
+				args: args,
+			}
+
+			createdJobs++
+			nextPage++
+		}
+
+		gLog.Debug().Msg("groups scaning was finished")
+
+		// TODO maybe it's a bad idia
+		// in my minds it looks as getting Pooled struct
+		// and then destroy it via setting nil to pointer.
+		// So GC must clear it. Maybe it's a very bad idea.
+		rsp = nil
+	}
+
+	gLog.Debug().Msg("all jobs were spawned, waiting...")
+	jobsWait.Wait()
+
+	gLog.Debug().Msg("all jobs are executed, close result pipeline")
+	close(prjsChannel)
 
 	return
 }

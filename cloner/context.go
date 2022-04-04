@@ -4,4 +4,6 @@ type contextKey int
 
 const (
 	contextKeyKernSignal contextKey = iota
+	contextKeyPrjsPage
+	contextKeyPrjsChannel
 )
