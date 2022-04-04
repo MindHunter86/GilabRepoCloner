@@ -60,7 +60,16 @@ func main() {
 		},
 
 		// Queue settings
-		//
+		&cli.IntFlag{
+			Name:  "queue-workers",
+			Value: 4,
+			Usage: "queue-wrokers",
+		},
+		&cli.IntFlag{
+			Name:  "queue-job-buffer",
+			Value: 128,
+			Usage: "queue-job-buffer",
+		},
 
 		// System settings
 

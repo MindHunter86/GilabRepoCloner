@@ -99,8 +99,10 @@ func (m *Cloner) Bootstrap(action uint8) (e error) {
 }
 
 func (m *Cloner) loop(errors chan error, done func()) {
+	defer done()
+
 	// var err error
-	kernSignal := gCtx.Value("kernSignal").(chan os.Signal)
+	kernSignal := gCtx.Value(contextKeyKernSignal).(chan os.Signal)
 
 	gLog.Debug().Msg("starting main event loop")
 

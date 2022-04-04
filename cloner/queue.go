@@ -100,7 +100,7 @@ LOOP:
 	for {
 		select {
 		case <-gCtx.Done():
-			gLog.Debug().Msg("main context abort() has been closed, stopping dispatcher")
+			gLog.Debug().Msg("main context abort() has been called, stopping dispatcher")
 			m.abort()
 			break LOOP
 		case j = <-m.jobQueue:
@@ -108,7 +108,7 @@ LOOP:
 			jChannel <- j
 
 			if gCtx.Err() != nil {
-				gLog.Debug().Msg("main context abort() has been closed, stopping dispatcher (job case)")
+				gLog.Debug().Msg("main context abort() has been called, stopping dispatcher (job case)")
 				m.abort()
 				break LOOP
 			}
@@ -117,4 +117,6 @@ LOOP:
 
 	gLog.Debug().Msg("waiting for workers death")
 	m.wg.Wait()
+
+	gLog.Debug().Msg("workers dead, bye")
 }
