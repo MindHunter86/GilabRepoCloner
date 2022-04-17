@@ -29,8 +29,6 @@ type (
 	jobResult struct {
 		err     error
 		payload interface{}
-
-		resultChannel chan *jobResult
 	}
 	worker struct {
 		ctx context.Context
@@ -257,22 +255,4 @@ LOOP:
 	m.wg.Wait()
 
 	gLog.Debug().Msg("workers dead, bye")
-}
-
-// non-blocking job push in queue
-func (m *pool) push(jb *job) bool {
-	select {
-	case <-gCtx.Done():
-		break
-	case m.jobQueue <- jb:
-		if gCtx.Err() != nil {
-			return false
-		}
-
-		return true
-	default:
-		return false
-	}
-
-	return false
 }
