@@ -58,13 +58,17 @@ func main() {
 			Usage: "Internal HTTP client connection `TIMEOUT` (format: 1000ms, 1s)",
 			Value: 10 * time.Second,
 		},
+		&cli.StringFlag{
+			Name:  "http-client-user-agent",
+			Usage: "Custom User-Agent for all requests",
+		},
 		&cli.BoolFlag{
 			Name:  "http-client-insecure",
 			Usage: "Flag for TLS certificate verification disabling",
 		},
 		&cli.BoolFlag{
 			Name:  "http-client-insecure-ciphers",
-			Usage: "Flag for avoiding of setting TLS min version to 1.2 and using secure ciphers.",
+			Usage: "Flag for avoiding of setting TLS min version to 1.2 and using secure ciphers",
 		},
 
 		// Queue settings

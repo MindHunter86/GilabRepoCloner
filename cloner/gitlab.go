@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/xanzy/go-gitlab"
@@ -18,6 +19,8 @@ type glClient struct {
 	endpoint    *url.URL
 	groupPrefix string
 	apiToken    string
+
+	inner http.RoundTripper
 }
 
 func newGlClient() *glClient {
@@ -67,11 +70,28 @@ func (m *glClient) setGitlabConnection() (*gitlab.Client, error) {
 		gitlab.WithBaseURL(m.endpoint.String()),
 		gitlab.WithHTTPClient(&http.Client{
 			Timeout: gCli.Duration("http-client-timeout"),
-			Transport: &http.Transport{
-				TLSClientConfig:    tlsConfig,
-				DisableCompression: false,
-			},
+			Transport: m.setGitlabUserAgent(&http.Transport{
+				DisableKeepAlives:   false,
+				IdleConnTimeout:     300 * time.Second,
+				MaxIdleConnsPerHost: 128,
+				TLSClientConfig:     tlsConfig,
+				DisableCompression:  false,
+			}),
 		}))
+}
+
+func (m *glClient) setGitlabUserAgent(inner http.RoundTripper) http.RoundTripper {
+	m.inner = inner
+	return m
+}
+
+func (m *glClient) RoundTrip(r *http.Request) (*http.Response, error) {
+	if len(gCli.String("http-client-user-agent")) != 0 {
+		r.Header.Set("User-Agent", gCli.String("http-client-user-agent"))
+	} else {
+		r.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:99.0) Gecko/20100101 Firefox/99.0")
+	}
+	return m.inner.RoundTrip(r)
 }
 
 func (m *glClient) printGroupsAction() (e error) {
