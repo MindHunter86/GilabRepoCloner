@@ -91,7 +91,7 @@ func (m *glClient) printRepositoriesAction() (e error) {
 func (m *glClient) getInstanceProjectsAsync(groups []*gitlab.Group) (projects []*gitlab.Project, e error) {
 	var prjs []*gitlab.Project
 	var jobsWait sync.WaitGroup
-	var mu sync.Mutex
+	// var mu sync.Mutex
 
 	responsePool := sync.Pool{
 		New: func() interface{} {
@@ -125,9 +125,9 @@ func (m *glClient) getInstanceProjectsAsync(groups []*gitlab.Group) (projects []
 			// first call for totalPages variable get
 			if rsp.TotalPages == 0 {
 				if prjs, rsp, e = m.getProjectsFromPage(group.ID, rsp.NextPage); e == nil {
-					mu.Lock()
+					// mu.Lock()
 					projects = append(projects, prjs...)
-					mu.Unlock()
+					// mu.Unlock()
 
 					if rsp.NextPage == 0 {
 						break
