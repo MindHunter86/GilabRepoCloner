@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/MindHunter86/GitlabRepoCloner/cloner"
+	"github.com/pkg/profile"
 
 	"github.com/rs/zerolog"
 	"github.com/urfave/cli/v2"
@@ -16,7 +17,7 @@ import (
 var version = "devel" // -ldflags="-X 'main.version=X.X.X'"
 
 func main() {
-	// defer profile.Start(profile.MemProfile, profile.ProfilePath(".")).Stop()
+	defer profile.Start(profile.CPUProfile, profile.ProfilePath(".")).Stop()
 
 	app := cli.NewApp()
 	cli.VersionFlag = &cli.BoolFlag{Name: "print-version", Aliases: []string{"V"}}
