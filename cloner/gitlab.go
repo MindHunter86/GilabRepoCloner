@@ -86,7 +86,7 @@ func (m *glClient) setGitlabUserAgent(inner http.RoundTripper) http.RoundTripper
 }
 
 func (m *glClient) RoundTrip(r *http.Request) (*http.Response, error) {
-	if len(gCli.String("http-client-user-agent")) != 0 {
+	if gCli.String("http-client-user-agent") != "" {
 		r.Header.Set("User-Agent", gCli.String("http-client-user-agent"))
 	} else {
 		r.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:99.0) Gecko/20100101 Firefox/99.0")
@@ -325,7 +325,7 @@ func (m *glClient) getGroupsFromPage(page int) ([]*gitlab.Group, *gitlab.Respons
 	}
 
 	// ??
-	if len(m.groupPrefix) != 0 {
+	if m.groupPrefix != "" {
 		// listGroupOptions.TopLevelOnly = gitlab.Bool(false)
 		listGroupOptions.AllAvailable = gitlab.Bool(true)
 	}
@@ -334,7 +334,7 @@ func (m *glClient) getGroupsFromPage(page int) ([]*gitlab.Group, *gitlab.Respons
 }
 
 func (m *glClient) getMatchedGroups(groups []*gitlab.Group) (matchedGroups []*gitlab.Group) {
-	if len(m.groupPrefix) == 0 {
+	if m.groupPrefix == "" {
 		return groups
 	}
 
