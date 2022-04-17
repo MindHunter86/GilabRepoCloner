@@ -53,9 +53,9 @@ func (m *Cloner) Bootstrap(action uint8) (e error) {
 	gCtx, gAbort = context.WithCancel(context.WithValue(context.Background(), contextKeyKernSignal, kernSignal))
 
 	// main event loop init
-	wg, ep := sync.WaitGroup{}, make(chan error, 1)
+	wg := sync.WaitGroup{}
 	wg.Add(1)
-	go m.loop(ep, wg.Done)
+	go m.loop(wg.Done)
 
 	// queue subsystem init
 	wg.Add(1)
@@ -101,7 +101,7 @@ func (m *Cloner) Bootstrap(action uint8) (e error) {
 	return e
 }
 
-func (m *Cloner) loop(errors chan error, done func()) {
+func (m *Cloner) loop(done func()) {
 	defer done()
 
 	// var err error
@@ -116,11 +116,6 @@ LOOP:
 			gLog.Info().Msg("Syscall.SIG* has been detected! Closing application...")
 			gAbort()
 			break LOOP
-		// case err = <-errors:
-		// 	if err != nil {
-		// 		gLog.Error().Err(err).Msg("Fatal Runtime Error!!! Abnormal application closing ...")
-		// 		break LOOP
-		// 	}
 		case <-gCtx.Done():
 			break LOOP
 		}
