@@ -62,6 +62,10 @@ func main() {
 			Name:  "http-client-insecure",
 			Usage: "Flag for TLS certificate verification disabling",
 		},
+		&cli.BoolFlag{
+			Name:  "http-client-insecure-ciphers",
+			Usage: "Flag for avoiding of setting TLS min version to 1.2 and using secure ciphers.",
+		},
 
 		// Queue settings
 		&cli.IntFlag{

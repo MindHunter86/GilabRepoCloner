@@ -14,5 +14,11 @@
 # Dependency directories (remove the comment below to include it)
 # vendor/
 
-queue/
+# Visual Studio Code configs
 .vscode/
+
+# Profiler files
+*.pprof
+
+# Some customs
+queue/

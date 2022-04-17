@@ -48,14 +48,27 @@ func (m *glClient) connect(arg string) (*glClient, error) {
 }
 
 func (m *glClient) setGitlabConnection() (*gitlab.Client, error) {
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: gCli.Bool("http-client-insecure"),
+	}
+
+	if !gCli.Bool("http-client-insecure-ciphers") {
+		tlsConfig.MinVersion = tls.VersionTLS12
+		tlsConfig.CipherSuites = []uint16{
+			tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+			tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+			tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+			tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+			tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,
+			tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
+		}
+	}
 	return gitlab.NewClient(m.apiToken,
 		gitlab.WithBaseURL(m.endpoint.String()),
 		gitlab.WithHTTPClient(&http.Client{
 			Timeout: gCli.Duration("http-client-timeout"),
 			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: gCli.Bool("http-client-insecure"),
-				},
+				TLSClientConfig:    tlsConfig,
 				DisableCompression: false,
 			},
 		}))
@@ -91,7 +104,6 @@ func (m *glClient) printRepositoriesAction() (e error) {
 func (m *glClient) getInstanceProjectsAsync(groups []*gitlab.Group) (projects []*gitlab.Project, e error) {
 	var prjs []*gitlab.Project
 	var jobsWait sync.WaitGroup
-	// var mu sync.Mutex
 
 	responsePool := sync.Pool{
 		New: func() interface{} {
@@ -125,9 +137,7 @@ func (m *glClient) getInstanceProjectsAsync(groups []*gitlab.Group) (projects []
 			// first call for totalPages variable get
 			if rsp.TotalPages == 0 {
 				if prjs, rsp, e = m.getProjectsFromPage(group.ID, rsp.NextPage); e == nil {
-					// mu.Lock()
 					projects = append(projects, prjs...)
-					// mu.Unlock()
 
 					if rsp.NextPage == 0 {
 						break
