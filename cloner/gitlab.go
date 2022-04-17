@@ -141,6 +141,7 @@ func (m *glClient) getInstanceProjectsAsync(groups []*gitlab.Group) (projects []
 			result := payload.(*jobResult)
 			if result.err != nil {
 				gLog.Error().Err(result.err).Msg("")
+				continue
 			}
 
 			projects = append(projects, result.payload.([]*gitlab.Project)...)
@@ -172,7 +173,6 @@ func (m *glClient) getInstanceProjectsAsync(groups []*gitlab.Group) (projects []
 				}
 			}
 
-			// TODO ERROR HANDLING
 			// async calls (jobs spawn)
 			args := map[string]interface{}{
 				"page":  nextPage,
@@ -188,7 +188,6 @@ func (m *glClient) getInstanceProjectsAsync(groups []*gitlab.Group) (projects []
 				prjs, _, e := m.getProjectsFromPage(group, page)
 				if e != nil {
 					gLog.Error().Err(e).Msg("There is abnormal result from Gitlab API")
-					// TODO ADD ERROR MESSAGE HANDLING
 					return nil, e
 				}
 
@@ -202,7 +201,7 @@ func (m *glClient) getInstanceProjectsAsync(groups []*gitlab.Group) (projects []
 
 		gLog.Debug().Msg("groups scaning was finished")
 
-		// TODO maybe it's a bad idia
+		// ??
 		// in my minds it looks as getting Pooled struct
 		// and then destroy it via setting nil to pointer.
 		// So GC must clear it. Maybe it's a very bad idea.
@@ -234,34 +233,25 @@ func (m *glClient) getProjectsFromPage(gid, page int) ([]*gitlab.Project, *gitla
 
 func (m *glClient) getInstanceGroupsAsync() (groups []*gitlab.Group, e error) {
 	var grp []*gitlab.Group
+	var jobsWait sync.WaitGroup
 	var rsp *gitlab.Response = &gitlab.Response{}
 
-	var jobsWait sync.WaitGroup
-	var collectorWait sync.WaitGroup
-	grpsChannel := make(chan *[]*gitlab.Group, gCli.Int("queue-workers"))
-
 	// job responses collector:
-	collectorWait.Add(1)
-	go func(done func()) {
-		defer done()
+	collector := newCollector()
+	collector.wg.Add(2)
+	go func() {
+		defer collector.wg.Done()
 
-		gLog.Debug().Msgf("there is %d jobs in queue", len(grpsChannel))
-		defer gLog.Debug().Msg("jobs result collector has been finished")
-
-		var ok bool
-		var jobGroups *[]*gitlab.Group
-
-		for {
-			jobGroups, ok = <-grpsChannel
-			gLog.Debug().Msg("there is new result from job, handling...")
-			if !ok || gCtx.Err() != nil {
-				gLog.Debug().Msgf("result pipeline has been closed. Len %d", len(grpsChannel))
-				return
+		for _, payload := range collector.collect() {
+			result := payload.(*jobResult)
+			if result.err != nil {
+				gLog.Error().Err(e).Msg("")
+				continue
 			}
 
-			groups = append(groups, *jobGroups...)
+			groups = append(groups, result.payload.([]*gitlab.Group)...)
 		}
-	}(collectorWait.Done)
+	}()
 
 	// job spawner:
 	for nextPage := 0; nextPage <= rsp.TotalPages && gCtx.Err() == nil; nextPage++ {
@@ -269,8 +259,7 @@ func (m *glClient) getInstanceGroupsAsync() (groups []*gitlab.Group, e error) {
 		// first call for totalPages variable get
 		if rsp.TotalPages == 0 {
 			if grp, rsp, e = m.getGroupsFromPage(rsp.NextPage); e == nil {
-				grp = m.getMatchedGroups(grp)
-				grpsChannel <- &grp
+				groups = append(groups, m.getMatchedGroups(grp)...)
 
 				gLog.Debug().Msgf("nextpage %d", rsp.NextPage)
 				gLog.Debug().Msgf("total pages %d", rsp.TotalPages)
@@ -286,48 +275,29 @@ func (m *glClient) getInstanceGroupsAsync() (groups []*gitlab.Group, e error) {
 			}
 		}
 
-		// TODO ERROR HANDLING
 		// async calls (jobs spawn)
 		args := map[string]interface{}{
-			"page":    nextPage,
-			"channel": grpsChannel,
-			"add":     jobsWait.Add,
-			"done":    jobsWait.Done,
+			"page": nextPage,
 		}
+
+		jb := newJob(func(payload map[string]interface{}) (interface{}, error) {
+			defer gLog.Debug().Msg("all done, job can be stopped now")
+
+			page := payload["page"].(int)
+			gLog.Debug().Msgf("There is new job with page %d", page)
+
+			grps, _, e := m.getGroupsFromPage(page)
+			if e != nil {
+				gLog.Error().Err(e).Msg("There is abnormal result from Gitlab API")
+				return nil, e
+			}
+
+			return m.getMatchedGroups(grps), e
+		}, args, jobsWait.Done)
+		jb.assignCollector(collector.jobsChannel)
 
 		jobsWait.Add(1)
-		gQueue <- &job{
-			fn: func(payload map[string]interface{}) (interface{}, error) {
-				defer payload["done"].(func())()
-				// payload["add"].(func(int))(1)
-
-				page := payload["page"].(int)
-				pChannel := payload["channel"].(chan *[]*gitlab.Group)
-
-				gLog.Debug().Msgf("There is new job with page %d", page)
-
-				grps, _, e := m.getGroupsFromPage(page)
-				if e != nil {
-					gLog.Error().Err(e).Msg("There is abnormal result from Gitlab API")
-					// TODO ADD ERROR MESSAGE HANDLING
-					return nil, e
-				}
-
-				grps = m.getMatchedGroups(grps)
-
-				gLog.Debug().Msg("trying to push projects in pipe")
-				select {
-				case <-gCtx.Done():
-					return nil, nil
-				case pChannel <- &grps:
-					gLog.Debug().Msgf("successfully pushed projects for page %d", page)
-				}
-
-				gLog.Debug().Msg("all done, job can be stopped now")
-				return nil, nil
-			},
-			args: args,
-		}
+		gQueue <- jb
 
 		gLog.Debug().Msg("groups scaning was finished")
 	}
@@ -335,10 +305,9 @@ func (m *glClient) getInstanceGroupsAsync() (groups []*gitlab.Group, e error) {
 	gLog.Debug().Msg("all jobs were spawned, waiting...")
 	jobsWait.Wait()
 
-	gLog.Debug().Msg("all jobs are executed, close result pipeline")
-	close(grpsChannel)
-
-	collectorWait.Wait()
+	gLog.Debug().Msg("all jobs are executed, close collector pipeline")
+	close(collector.jobsChannel)
+	collector.wg.Wait()
 	return
 }
 
@@ -350,14 +319,25 @@ func (m *glClient) getGroupsFromPage(page int) ([]*gitlab.Group, *gitlab.Respons
 		listOptions.Page = page
 	}
 
-	return m.instance.Groups.ListGroups(&gitlab.ListGroupsOptions{
+	listGroupOptions := &gitlab.ListGroupsOptions{
 		ListOptions:  listOptions,
-		AllAvailable: gitlab.Bool(true),
 		TopLevelOnly: gitlab.Bool(true),
-	})
+	}
+
+	// ??
+	if len(m.groupPrefix) != 0 {
+		// listGroupOptions.TopLevelOnly = gitlab.Bool(false)
+		listGroupOptions.AllAvailable = gitlab.Bool(true)
+	}
+
+	return m.instance.Groups.ListGroups(listGroupOptions)
 }
 
 func (m *glClient) getMatchedGroups(groups []*gitlab.Group) (matchedGroups []*gitlab.Group) {
+	if len(m.groupPrefix) == 0 {
+		return groups
+	}
+
 	for i, group := range groups {
 		if group.FullPath == m.groupPrefix {
 			matchedGroups = append(matchedGroups, group)

@@ -174,16 +174,14 @@ func (m *worker) start() {
 
 			// send job to assigned collector if it exists
 			if j.collector != nil {
-				gLog.Info().Msg("trying to push job into assigned collector")
+				gLog.Debug().Msg("trying to push job into assigned collector")
 				if j == nil {
 					panic("JOB IS NILL 3")
 				}
 				j.collector <- j
 			}
 
-			if j.done != nil {
-				j.done()
-			}
+			j.done()
 
 			if m.ctx.Err() != nil {
 				close(m.jobChannel)
