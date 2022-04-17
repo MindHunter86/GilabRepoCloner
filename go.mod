@@ -4,10 +4,10 @@ go 1.17
 
 require (
 	github.com/jedib0t/go-pretty/v6 v6.3.0
+	github.com/pkg/profile v1.6.0
 	github.com/rs/zerolog v1.26.1
 	github.com/urfave/cli/v2 v2.4.0
 	github.com/xanzy/go-gitlab v0.60.0
-	gopkg.in/urfave/cli.v1 v1.20.0
 )
 
 require (

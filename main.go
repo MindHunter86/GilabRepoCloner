@@ -11,11 +11,15 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/urfave/cli/v2"
+
+	"github.com/pkg/profile"
 )
 
 var version = "devel" // -ldflags="-X 'main.version=X.X.X'"
 
 func main() {
+	defer profile.Start(profile.MemProfile, profile.ProfilePath(".")).Stop()
+
 	app := cli.NewApp()
 	cli.VersionFlag = &cli.BoolFlag{Name: "print-version", Aliases: []string{"V"}}
 

@@ -90,6 +90,8 @@ func (m *glClient) printRepositoriesAction() (e error) {
 
 func (m *glClient) getInstanceProjectsAsync(groups []*gitlab.Group) (projects []*gitlab.Project, e error) {
 	var prjs []*gitlab.Project
+	var jobsWait sync.WaitGroup
+	var mu sync.Mutex
 
 	responsePool := sync.Pool{
 		New: func() interface{} {
@@ -97,32 +99,21 @@ func (m *glClient) getInstanceProjectsAsync(groups []*gitlab.Group) (projects []
 		},
 	}
 
-	var jobsWait sync.WaitGroup
-	var collectorWait sync.WaitGroup
-	prjsChannel := make(chan *[]*gitlab.Project, gCli.Int("queue-workers"))
-
 	// job responses collector:
-	collectorWait.Add(1)
-	go func(done func()) {
-		defer done()
+	collector := newCollector()
+	collector.wg.Add(2)
+	go func() {
+		defer collector.wg.Done()
 
-		gLog.Debug().Msgf("there is %d jobs in queue", len(prjsChannel))
-		defer gLog.Debug().Msg("jobs result collector has been finished")
-
-		var ok bool
-		var jobProjects *[]*gitlab.Project
-
-		for {
-			jobProjects, ok = <-prjsChannel
-			gLog.Debug().Msg("there is new result from job, handling...")
-			if !ok || gCtx.Err() != nil {
-				gLog.Debug().Msgf("result pipeline has been closed. Len %d", len(prjsChannel))
-				return
+		for _, payload := range collector.collect() {
+			result := payload.(*jobResult)
+			if result.err != nil {
+				gLog.Error().Err(result.err).Msg("")
 			}
 
-			projects = append(projects, *jobProjects...)
+			projects = append(projects, result.payload.([]*gitlab.Project)...)
 		}
-	}(collectorWait.Done)
+	}()
 
 	// job spawner:
 	for i, group := range groups {
@@ -134,7 +125,9 @@ func (m *glClient) getInstanceProjectsAsync(groups []*gitlab.Group) (projects []
 			// first call for totalPages variable get
 			if rsp.TotalPages == 0 {
 				if prjs, rsp, e = m.getProjectsFromPage(group.ID, rsp.NextPage); e == nil {
-					prjsChannel <- &prjs
+					mu.Lock()
+					projects = append(projects, prjs...)
+					mu.Unlock()
 
 					if rsp.NextPage == 0 {
 						break
@@ -152,43 +145,29 @@ func (m *glClient) getInstanceProjectsAsync(groups []*gitlab.Group) (projects []
 			// TODO ERROR HANDLING
 			// async calls (jobs spawn)
 			args := map[string]interface{}{
-				"page":    nextPage,
-				"group":   group.ID,
-				"channel": prjsChannel,
-				"add":     jobsWait.Add,
-				"done":    jobsWait.Done,
+				"page":  nextPage,
+				"group": group.ID,
 			}
 
-			gQueue <- &job{
-				fn: func(payload map[string]interface{}) error {
-					defer payload["done"].(func())()
-					payload["add"].(func(int))(1)
+			jb := newJob(func(payload map[string]interface{}) (interface{}, error) {
+				defer gLog.Debug().Msg("all done, job can be stopped now")
 
-					page, group := payload["page"].(int), payload["group"].(int)
-					pChannel := payload["channel"].(chan *[]*gitlab.Project)
+				page, group := payload["page"].(int), payload["group"].(int)
+				gLog.Debug().Msgf("There is new job with page %d and group %d", page, group)
 
-					gLog.Debug().Msgf("There is new job with page %d and group %d", page, group)
+				prjs, _, e := m.getProjectsFromPage(group, page)
+				if e != nil {
+					gLog.Error().Err(e).Msg("There is abnormal result from Gitlab API")
+					// TODO ADD ERROR MESSAGE HANDLING
+					return nil, e
+				}
 
-					prjs, _, e := m.getProjectsFromPage(group, page)
-					if e != nil {
-						gLog.Error().Err(e).Msg("There is abnormal result from Gitlab API")
-						// TODO ADD ERROR MESSAGE HANDLING
-						return e
-					}
+				return prjs, e
+			}, args, jobsWait.Done)
+			jb.assignCollector(collector.jobsChannel)
 
-					gLog.Debug().Msg("trying to push projects in pipe")
-					select {
-					case <-gCtx.Done():
-						return nil
-					case pChannel <- &prjs:
-						gLog.Debug().Msgf("successfully pushed projects for group %d & page %d", page, group)
-					}
-
-					gLog.Debug().Msg("all done, job can be stopped now")
-					return nil
-				},
-				args: args,
-			}
+			jobsWait.Add(1)
+			gQueue <- jb
 		}
 
 		gLog.Debug().Msg("groups scaning was finished")
@@ -203,10 +182,9 @@ func (m *glClient) getInstanceProjectsAsync(groups []*gitlab.Group) (projects []
 	gLog.Debug().Msg("all jobs were spawned, waiting...")
 	jobsWait.Wait()
 
-	gLog.Debug().Msg("all jobs are executed, close result pipeline")
-	close(prjsChannel)
-
-	collectorWait.Wait()
+	gLog.Debug().Msg("all jobs are executed, close collector pipeline")
+	close(collector.jobsChannel)
+	collector.wg.Wait()
 	return
 }
 
@@ -264,13 +242,14 @@ func (m *glClient) getInstanceGroupsAsync() (groups []*gitlab.Group, e error) {
 				grp = m.getMatchedGroups(grp)
 				grpsChannel <- &grp
 
+				gLog.Debug().Msgf("nextpage %d", rsp.NextPage)
+				gLog.Debug().Msgf("total pages %d", rsp.TotalPages)
+
 				if rsp.NextPage == 0 {
 					break
 				}
 
 				nextPage = rsp.NextPage
-				gLog.Debug().Msgf("nextpage %d", rsp.NextPage)
-				gLog.Debug().Msgf("total pages %d", rsp.TotalPages)
 			} else {
 				gLog.Error().Err(e).Msg("There is abnraml result from Gitlab API")
 				return
@@ -286,10 +265,11 @@ func (m *glClient) getInstanceGroupsAsync() (groups []*gitlab.Group, e error) {
 			"done":    jobsWait.Done,
 		}
 
+		jobsWait.Add(1)
 		gQueue <- &job{
-			fn: func(payload map[string]interface{}) error {
+			fn: func(payload map[string]interface{}) (interface{}, error) {
 				defer payload["done"].(func())()
-				payload["add"].(func(int))(1)
+				// payload["add"].(func(int))(1)
 
 				page := payload["page"].(int)
 				pChannel := payload["channel"].(chan *[]*gitlab.Group)
@@ -300,7 +280,7 @@ func (m *glClient) getInstanceGroupsAsync() (groups []*gitlab.Group, e error) {
 				if e != nil {
 					gLog.Error().Err(e).Msg("There is abnormal result from Gitlab API")
 					// TODO ADD ERROR MESSAGE HANDLING
-					return e
+					return nil, e
 				}
 
 				grps = m.getMatchedGroups(grps)
@@ -308,13 +288,13 @@ func (m *glClient) getInstanceGroupsAsync() (groups []*gitlab.Group, e error) {
 				gLog.Debug().Msg("trying to push projects in pipe")
 				select {
 				case <-gCtx.Done():
-					return nil
+					return nil, nil
 				case pChannel <- &grps:
-					gLog.Debug().Msgf("successfully pushed projects for group %d & page %d", page)
+					gLog.Debug().Msgf("successfully pushed projects for page %d", page)
 				}
 
 				gLog.Debug().Msg("all done, job can be stopped now")
-				return nil
+				return nil, nil
 			},
 			args: args,
 		}

@@ -5,10 +5,32 @@ import (
 	"sync"
 )
 
+const (
+	jobStatusCreated = uint8(iota)
+	jobStatusPending
+	jobStatusWorking
+	jobStatusSuccess
+	jobStatusFailure
+	jobStatusAborted
+)
+
 type (
 	job struct {
-		fn   func(map[string]interface{}) error
+		fn   func(map[string]interface{}) (interface{}, error)
 		args map[string]interface{}
+
+		status uint8
+		result chan *jobResult
+
+		collector chan *job
+
+		done func()
+	}
+	jobResult struct {
+		err     error
+		payload interface{}
+
+		resultChannel chan *jobResult
 	}
 	worker struct {
 		ctx context.Context
@@ -25,7 +47,95 @@ type (
 		jobQueue   chan *job
 		workerPool chan chan *job
 	}
+
+	collector struct {
+		jobsChannel chan *job
+		payloads    []interface{}
+
+		wg sync.WaitGroup
+	}
 )
+
+// func newJob(fn func(map[string]interface{}) error, args map[string]interface{}) (*job, *jobEvent) {
+// 	events := make(chan *jobEvent,)
+// 	return
+// }
+
+func newCollector() *collector {
+	return &collector{
+		jobsChannel: make(chan *job, gCli.Int("queue-workers")+1),
+	}
+}
+
+func (m *collector) collect() []interface{} {
+	defer m.wg.Done()
+	defer gLog.Debug().Msg("queue collector has been stopped")
+
+	var jobs []*job
+
+LOOP:
+	for {
+		select {
+		case <-gCtx.Done():
+			return nil
+		case jb, ok := <-m.jobsChannel:
+			if !ok {
+				break LOOP
+			}
+
+			jobs = append(jobs, jb)
+
+			if gCtx.Err() != nil {
+				return nil
+			}
+		}
+	}
+
+	// LIFO stack implementation
+	for len(jobs) > 0 {
+		l := len(jobs) - 1
+		j := jobs[l]
+
+		if payload, ok := j.getResult(); ok {
+			m.payloads = append(m.payloads, payload)
+			jobs = jobs[:l]
+		}
+	}
+
+	return m.payloads
+}
+
+func newJob(fn func(map[string]interface{}) (interface{}, error), args map[string]interface{}, done func()) *job {
+	return &job{
+		fn:   fn,
+		args: args,
+
+		status: jobStatusCreated,
+		result: make(chan *jobResult, 1),
+
+		done: done,
+	}
+}
+
+func (m *job) assignCollector(coll chan *job) {
+	m.collector = coll
+}
+
+// non-blocking result pop from result channel
+func (m *job) getResult() (interface{}, bool) {
+	select {
+	case payload, ok := <-m.result:
+		if gCtx.Err() != nil {
+			break
+		}
+		return payload, ok
+	case <-gCtx.Done():
+		break
+	default:
+		break
+	}
+	return nil, false
+}
 
 func newWorker(ctx context.Context, workerPool chan chan *job) *worker {
 	return &worker{
@@ -37,8 +147,6 @@ func newWorker(ctx context.Context, workerPool chan chan *job) *worker {
 }
 
 func (m *worker) start() {
-	var j *job
-
 	gLog.Debug().Msg("worker has been started")
 	defer gLog.Debug().Msg("abort func has been called, closing worker")
 
@@ -51,9 +159,33 @@ func (m *worker) start() {
 		case <-m.ctx.Done():
 			close(m.jobChannel)
 			return
-		case j = <-m.jobChannel:
-			// payload
-			_ = j.fn(j.args)
+		case j := <-m.jobChannel:
+			j.status = jobStatusWorking
+
+			res := &jobResult{}
+			if res.payload, res.err = j.fn(j.args); res.err != nil {
+				j.status = jobStatusFailure
+			} else {
+				j.status = jobStatusSuccess
+			}
+
+			// send result to j.getResult()
+			if j.result != nil {
+				j.result <- res
+			}
+
+			// send job to assigned collector if it exists
+			if j.collector != nil {
+				gLog.Info().Msg("trying to push job into assigned collector")
+				if j == nil {
+					panic("JOB IS NILL 3")
+				}
+				j.collector <- j
+			}
+
+			if j.done != nil {
+				j.done()
+			}
 
 			if m.ctx.Err() != nil {
 				close(m.jobChannel)
@@ -106,6 +238,8 @@ LOOP:
 			m.abort()
 			break LOOP
 		case j = <-m.jobQueue:
+			j.status = jobStatusPending
+
 			jChannel = <-m.workerPool
 			jChannel <- j
 
@@ -123,4 +257,22 @@ LOOP:
 	m.wg.Wait()
 
 	gLog.Debug().Msg("workers dead, bye")
+}
+
+// non-blocking job push in queue
+func (m *pool) push(jb *job) bool {
+	select {
+	case <-gCtx.Done():
+		break
+	case m.jobQueue <- jb:
+		if gCtx.Err() != nil {
+			return false
+		}
+
+		return true
+	default:
+		return false
+	}
+
+	return false
 }
