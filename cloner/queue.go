@@ -54,11 +54,6 @@ type (
 	}
 )
 
-// func newJob(fn func(map[string]interface{}) error, args map[string]interface{}) (*job, *jobEvent) {
-// 	events := make(chan *jobEvent,)
-// 	return
-// }
-
 func newCollector() *collector {
 	return &collector{
 		jobsChannel: make(chan *job, gCli.Int("queue-workers")+1),
