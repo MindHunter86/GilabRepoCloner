@@ -163,7 +163,7 @@ func main() {
 
 type SeverityHook struct{}
 
-func (h SeverityHook) Run(e *zerolog.Event, level zerolog.Level, msg string) {
+func (h SeverityHook) Run(e *zerolog.Event, level zerolog.Level, _ string) {
 	if level != zerolog.DebugLevel {
 		return
 	}
